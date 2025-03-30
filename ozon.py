@@ -6,6 +6,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import numpy as np
+import pandas as pd
 
 import sqlite3
 
@@ -52,10 +53,10 @@ def parse_categories():
     return hrefs
 
 
-def update_product_w_additional_data(): # WIP
+def update_product_w_additional_data(id, name, price, category, rating, reviews, link):
     conn = None
     try:
-        conn = sqlite3.connect('products_ozon.db', timeout=10)
+        conn = sqlite3.connect('data/products_ozon.db', timeout=10)
         cursor = conn.cursor()
 
         cursor.execute('''
@@ -79,7 +80,7 @@ def update_product_w_additional_data(): # WIP
 def insert_product(id, name, price, category, rating, reviews, link):
     conn = None
     try:
-        conn = sqlite3.connect('products_ozon.db', timeout=10)
+        conn = sqlite3.connect('data/products_ozon.db', timeout=10)
         cursor = conn.cursor()
 
         cursor.execute('''
@@ -104,7 +105,7 @@ def add_trader():
 
 
 def get_top_of_category():
-    conn = sqlite3.connect('products_ozon.db')
+    conn = sqlite3.connect('data/products_ozon.db')
 
     cursor = conn.cursor()
 
@@ -129,7 +130,7 @@ def get_top_of_category():
     conn.commit()
     conn.close()
 
-    with open('categories_2.txt', 'r') as f:
+    with open('data/categories_2.txt', 'r') as f:
         categories = [row.strip() for row in f]
 
     driver = init_webdriver()
@@ -176,7 +177,7 @@ def get_top_of_category():
 
 
 def get_full_info():
-    conn = sqlite3.connect('products_ozon.db')
+    conn = sqlite3.connect('data/products_ozon.db')
     cursor = conn.cursor()
     cursor.execute("SELECT link FROM products")
     results = cursor.fetchall()
@@ -264,3 +265,103 @@ def get_full_info():
         print(f'"{counter_name}", "{counter_price}", "{counter_reviews}", "{average_price}", "{average_reviews}", "{direct_counter}", "{max_reviews}"')
 
 
+def get_specific_info(id):
+    driver = init_webdriver()
+    driver.get('https://www.ozon.ru/product/'+str(id))
+    time.sleep(5)
+    scrolldown(driver, 1)
+    time.sleep(1)
+    scrolldown(driver, 1)
+
+    name = (driver.find_element(By.CSS_SELECTOR, 'h1').text)
+    rating_reviews = (driver.find_element(By.XPATH, '/html/body/div[1]/div/div[1]/div[3]/div[3]/div[1]/div[1]/div[2]/div/div/div/div[2]/div[1]/a/div').text)
+    rating, reviews = rating_reviews.split(' • ')
+    reviews = reviews[:reviews.find(' ')]
+    price = (driver.find_element(By.XPATH, '/html/body/div[1]/div/div[1]/div[3]/div[3]/div[2]/div/div/div[1]/div[2]/div/div[1]/div/div/div[1]/div[1]').text)
+    price = price.replace(" ", '').replace('₽', '').replace('c Ozon Картой', ' ').replace(' ', '').replace('\n', '')
+    print(name, rating, reviews, price)
+
+    try:
+        trader_list = driver.find_element(By.ID, 'seller-list')
+        children = trader_list.find_elements(By.XPATH, './*')
+        if len(children) > 0:
+            button = children[-1]
+            button.click()
+    except selenium.common.exceptions.NoSuchElementException:
+        ...
+
+    try:
+        trader_list = driver.find_element(By.CLASS_NAME, 'k5u_28')
+        trader_list = trader_list.text.split('\n')
+        print(trader_list[1])
+    except selenium.common.exceptions.NoSuchElementException:
+        trader = None
+
+    try:
+        WebDriverWait(driver, 3).until(
+            EC.presence_of_element_located((By.CLASS_NAME, 'mp8_28'))
+        )
+    except selenium.common.exceptions.TimeoutException:
+        ...
+
+    try:
+        all_traders = driver.find_elements(By.CLASS_NAME, 'mp8_28')
+        print(len(all_traders))
+
+    except selenium.common.exceptions.NoSuchElementException:
+        all_traders = []
+
+    time.sleep(2)
+    scrolldown(driver, 2)
+
+    max_reviews = 0
+    direct_counter = ''
+
+    average_reviews = 0
+    sum_reviews = 0
+
+    average_price = 0
+    sum_price = 0
+    weighted_price = 0
+    for i, tr in enumerate(all_traders):
+        text = str(tr.text).split('\n')
+        print(text)
+        counter_name = text[0]
+        counter_reviews = 0
+        counter_price = 0
+        for txt in text:
+            if 'тзыв' in txt:
+                counter_reviews = txt[:txt.find(' ')]
+                sum_reviews += int(counter_reviews)
+                if int(counter_reviews) > max_reviews:
+                    max_reviews = int(counter_reviews)
+                    direct_counter = counter_name
+
+            if '₽' in txt and not '%' in txt:
+                counter_price = txt.replace(' ', '').replace('₽', '')
+                sum_price += int(counter_price)
+
+        average_reviews = float(sum_reviews / len(all_traders))
+        average_price = float(sum_price / len(all_traders))
+
+    print(
+        f'"{id}", "{name}", " ",  "{len(all_traders)}", "{average_price}", '
+        f'"{average_reviews}", "{direct_counter}", "{max_reviews}", "{price}", "Смартфоны", {rating}, '
+        f'{'https://www.ozon.ru/product/'+str(id)}')
+
+    data = {
+        'name': [name],
+        'price': [int(price)],
+        'category': ["Смартфоны"],
+        'rating': [rating],
+        'reviews': [int(reviews)],
+        'counter_amount': [len(all_traders)],
+        'counter_avg_price': [average_price],
+        'counter_avg_reviews': [average_reviews],
+        'direct_counter': [direct_counter],
+        'direct_counter_reviews': [max_reviews]
+    }
+
+    df = pd.DataFrame(data)
+
+    return df
